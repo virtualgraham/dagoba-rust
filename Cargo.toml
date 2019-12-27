@@ -3,7 +3,7 @@ authors = ["Graham Shapiro <virtualgraham@gmail.com>"]
 name = "dagoba-rust"
 version = "0.0.0"
 edition = "2018"
-license = "Apache-2.0"
+license = "MIT"
 description= "An in-memory graph database"
 repository = "https://github.com/virtualgraham/dagoba-rust"
 keywords = ["database", "graphs"]
@@ -11,4 +11,4 @@ categories = ["database"]
 readme = "README.md"
 
 [dependencies]
-maplit = "0.1.4"
+maplit = "0.1.4"    
