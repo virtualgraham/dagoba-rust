@@ -155,8 +155,8 @@ impl Graph {
     
     
     pub fn search_verticies(self: &Self, filter: &VertexFilter) -> Vec<u64>  {
-        if let VertexFilter::Props(p) = filter {
-            return self.vertices.values().filter( move |v| properties_filter(&v.properties, p) ).map(|v| v.id).collect()
+        if let VertexFilter::Props(f) = filter {
+            return self.vertices.values().filter( move |v| properties_filter(&v.properties, f) ).map(|v| v.id).collect()
         } else if let VertexFilter::Id(id) = filter {
             return vec![*id];
         } else if let VertexFilter::Ids(ids) = filter {
@@ -207,6 +207,21 @@ pub enum QueryResult {
     Vertex(u64),
 }
 
+impl QueryResult {
+    pub fn as_value(&self) -> &Value {
+        match self {
+            QueryResult::Value(v) => v,
+            _ => panic!("QueryResult is not Value"),
+        }    
+    }
+
+    pub fn as_vertex(&self) -> &u64 {
+        match self {
+            QueryResult::Vertex(v) => v,
+            _ => panic!("QueryResult is not Vertex"),
+        }    
+    }
+}
 
 pub struct Query<'a> {
     pub graph: &'a Graph,
@@ -319,23 +334,23 @@ impl<'a> Query<'a> {
         self
     }
 
-    pub fn r#as(self: &mut Self, label:u64) -> &mut Self {
+    pub fn r#as(self: &mut Self, label:String) -> &mut Self {
         self.program.push(Box::new(AsPipe::new(label)));
         self
     }
 
-    pub fn back(self: &mut Self, label:u64) -> &mut Self {
+    pub fn back(self: &mut Self, label:String) -> &mut Self {
         self.program.push(Box::new(BackPipe::new(label)));
         self
     }
 
-    pub fn except(self: &mut Self, label:u64) -> &mut Self {
+    pub fn except(self: &mut Self, label:String) -> &mut Self {
         self.program.push(Box::new(ExceptPipe::new(label)));
         self
     }
 
-    pub fn merge(self: &mut Self, vertex_ids:Vec<u64>) -> &mut Self {
-        self.program.push(Box::new(MergePipe::new(vertex_ids)));
+    pub fn merge(self: &mut Self, labels:Vec<String>) -> &mut Self {
+        self.program.push(Box::new(MergePipe::new(labels)));
         self
     }
 }
@@ -492,6 +507,7 @@ impl<'a> PropertyPipe<'a> {
 impl<'a> Pipe for PropertyPipe<'a> {
     
     fn run(self: &mut Self, gremlin: Option<Gremlin>) -> MaybeGremlin {
+       
         if let Option::None = gremlin {
             return MaybeGremlin::Pull
         } 
@@ -642,12 +658,12 @@ impl<'a> Pipe for TakePipe {
 
 
 pub struct AsPipe {
-    label: u64
+    label: String
 }
 
 
 impl AsPipe {
-    fn new(label: u64) -> AsPipe {
+    fn new(label: String) -> AsPipe {
         AsPipe {
             label: label
         }
@@ -662,7 +678,7 @@ impl<'a> Pipe for AsPipe {
             return MaybeGremlin::Pull
         } 
 
-        let g = gremlin.unwrap();
+        let mut g = gremlin.unwrap();
 
         if let Option::None = g.vertex {
             return MaybeGremlin::Pull
@@ -670,24 +686,28 @@ impl<'a> Pipe for AsPipe {
 
         let v = g.vertex.unwrap();
 
-        let mut p = HashMap::new();
-        p.insert(self.label, v);
+        if g.r#as.is_none() { 
+            g.r#as = Some(HashMap::new()); 
+        }
 
-        let mut g = g.clone();
-        g.r#as = Some(p);
+        let p = g.r#as.as_mut().unwrap();
+        
+        p.insert(self.label.clone(), v);
 
-        return MaybeGremlin::Gremlin ( g )  
+        let g = g.clone();
+
+        return MaybeGremlin::Gremlin ( g )
     }
 }
 
 
 pub struct BackPipe {
-    label: u64
+    label: String
 }
 
 
 impl BackPipe {
-    fn new(label: u64) -> BackPipe {
+    fn new(label: String) -> BackPipe {
         BackPipe {
             label: label
         }
@@ -718,12 +738,12 @@ impl Pipe for BackPipe {
 
 
 pub struct ExceptPipe {
-    label: u64
+    label: String
 }
 
 
 impl ExceptPipe {
-    fn new(label: u64) -> ExceptPipe {
+    fn new(label: String) -> ExceptPipe {
         ExceptPipe {
             label: label
         }
@@ -756,16 +776,16 @@ impl<'a> Pipe for ExceptPipe {
 
 
 pub struct MergePipe {
-    vertex_ids:Vec<u64>,
-    mapped_ids:Option<Vec<u64>>
+    labels:Vec<String>,
+    vertices:Option<Vec<u64>>
 }
 
 
 impl MergePipe {
-    fn new(vertex_ids:Vec<u64>) -> MergePipe {
+    fn new(labels:Vec<String>) -> MergePipe {
         MergePipe {
-            vertex_ids: vertex_ids,
-            mapped_ids: None
+            labels: labels,
+            vertices: None
         }
     }
 }
@@ -774,27 +794,29 @@ impl MergePipe {
 impl Pipe for MergePipe {
     
     fn run(self: &mut Self, gremlin: Option<Gremlin>) -> MaybeGremlin {
-        if self.mapped_ids.is_none() && gremlin.is_none() {
+        if self.vertices.is_none() && gremlin.is_none() {
             return MaybeGremlin::Pull
         }
 
-        if self.mapped_ids.is_none() || self.mapped_ids.as_ref().unwrap().is_empty() {
+        if self.vertices.is_none() || self.vertices.as_ref().unwrap().is_empty() {
 
-            let a = match gremlin.as_ref().unwrap().r#as.as_ref() { None => HashMap::new(), Some(s) => s.clone() };
-            
-            self.mapped_ids = Some(self.vertex_ids.iter().filter_map( |id| match a.get(id) { None => None, Some(v) => Some(*v) }).collect());
-   
+            if gremlin.is_some() {
+                let a = match gremlin.as_ref().unwrap().r#as.as_ref() { None => HashMap::new(), Some(s) => s.clone() };
+                self.vertices = Some(self.labels.iter().filter_map( |id| match a.get(id) { None => None, Some(v) => Some(*v) }).collect());
+            } else {
+                self.vertices = Some(Vec::new());
+            }
         }
 
-        if self.mapped_ids.as_ref().unwrap().is_empty() {
+        if self.vertices.as_ref().unwrap().is_empty() {
             return MaybeGremlin::Pull
         }
 
-        let v = self.mapped_ids.as_mut().unwrap().pop().unwrap();
+        let v = self.vertices.as_mut().unwrap().pop().unwrap();
 
         return MaybeGremlin::Gremlin( Gremlin {
             vertex: Some(v),
-            r#as: gremlin.as_ref().unwrap().r#as.clone(),
+            r#as: if gremlin.is_none() { None } else { gremlin.as_ref().unwrap().r#as.clone() },
             result: None
         })
     }
@@ -805,7 +827,7 @@ impl Pipe for MergePipe {
 pub struct Gremlin {
     result: Option<Value>,
     vertex: Option<u64>,
-    r#as: Option<HashMap<u64, u64>>,
+    r#as: Option<HashMap<String, u64>>,
 }
 
 #[derive(Debug)]
@@ -821,7 +843,7 @@ fn filter_vertex(vertex:&Vertex, filter:&VertexFilter) -> bool {
         VertexFilter::None => true,
         VertexFilter::Id(id) => vertex.id == *id,
         VertexFilter::Ids(ids) => ids.contains(&vertex.id),
-        VertexFilter::Props(p) => properties_filter(p, &vertex.properties),
+        VertexFilter::Props(f) => properties_filter(&vertex.properties, f),
         VertexFilter::Fn(f) => f(vertex)
     }    
 }
@@ -831,7 +853,7 @@ fn filter_edge(edge:&Edge, filter: &EdgeFilter) -> bool {
         EdgeFilter::None => true,
         EdgeFilter::Label(l) => &edge.label == l,
         EdgeFilter::Labels(v) => v.contains(&edge.label),
-        EdgeFilter::Props(p) => properties_filter(p, &edge.properties)
+        EdgeFilter::Props(f) => properties_filter(&edge.properties, f)
     }
 }
 

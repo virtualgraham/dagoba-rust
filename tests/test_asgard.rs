@@ -187,6 +187,88 @@ fn asgard() {
     assert!(!out.contains(&QueryResult::Vertex(*name_idx.get("Thor").unwrap())));
     assert_eq!(out.len(), 1);
 
+    // property works like a map
+    let mut q = Query::new(&graph, VertexFilter::Id(*name_idx.get("Thor").unwrap()));
+    let out1:Vec<Value> = q.out(EdgeFilter::Label(String::from("parent"))).out(EdgeFilter::Label(String::from("parent")))
+        .run().iter().map(|r| graph.get_vertex(r.as_vertex()).unwrap().properties.get(&"name".to_string()).unwrap().clone() ).collect();
+
+    let mut q = Query::new(&graph, VertexFilter::Id(*name_idx.get("Thor").unwrap()));
+    let out2:Vec<Value> = q.out(EdgeFilter::Label(String::from("parent"))).out(EdgeFilter::Label(String::from("parent"))).property("name".to_string())
+        .run().iter().map(|r| r.as_value().clone()).collect();
+
+    assert_eq!(out1, out2);
+
+    // g.v('Thor').out().in().unique().filter({survives: true}) should be the empty array, because we don't label survivors
+    let mut q = Query::new(&graph, VertexFilter::Id(*name_idx.get("Thor").unwrap()));
+    let out = q.out(EdgeFilter::None).r#in(EdgeFilter::None).unique().filter(VertexFilter::Props(hashmap!{"survives".to_string() => Value::Bool(true)})).run();
+
+    assert!(out.len() == 0);
+
+    // g.v('Thor').out().in().unique().filter({gender: 'male'}) should contain Thor and his sibling
+    let mut q = Query::new(&graph, VertexFilter::Id(*name_idx.get("Thor").unwrap()));
+    let out = q.out(EdgeFilter::None).r#in(EdgeFilter::None).unique().filter(VertexFilter::Props(hashmap!{"gender".to_string() => Value::String("male".to_string())})).run();
+
+    assert!(out.contains(&QueryResult::Vertex(*name_idx.get("Baldr").unwrap())));
+    assert!(out.contains(&QueryResult::Vertex(*name_idx.get("Thor").unwrap())));
+
+    // g.v('Thor').out().out().out().in().in().in() should contain Thor and his sibling
+    let mut q = Query::new(&graph, VertexFilter::Id(*name_idx.get("Thor").unwrap()));
+    let out = q.out(EdgeFilter::None).out(EdgeFilter::None).out(EdgeFilter::None).r#in(EdgeFilter::None).r#in(EdgeFilter::None).r#in(EdgeFilter::None).run();
+    
+    assert!(out.contains(&QueryResult::Vertex(*name_idx.get("Baldr").unwrap())));
+    assert!(out.contains(&QueryResult::Vertex(*name_idx.get("Thor").unwrap())));
+
+    // g.v('Thor').out().out().out().in().in().in().unique().take(10) should contain Thor and his sibling
+    let mut q = Query::new(&graph, VertexFilter::Id(*name_idx.get("Thor").unwrap()));
+    let out = q.out(EdgeFilter::None).out(EdgeFilter::None).out(EdgeFilter::None).r#in(EdgeFilter::None).r#in(EdgeFilter::None).r#in(EdgeFilter::None).unique().take(10).run();
+
+    assert!(out.contains(&QueryResult::Vertex(*name_idx.get("Baldr").unwrap())));
+    assert!(out.contains(&QueryResult::Vertex(*name_idx.get("Thor").unwrap())));
+
+    
+    // g.v('Thor').out().out().out().in().in().in().unique().take(10) should contain Thor and his sibling
+    let mut q = Query::new(&graph, VertexFilter::Id(*name_idx.get("Thor").unwrap()));
+    let out = q.out(EdgeFilter::None).out(EdgeFilter::None).out(EdgeFilter::None).out(EdgeFilter::None).r#in(EdgeFilter::None).r#in(EdgeFilter::None).r#in(EdgeFilter::None).r#in(EdgeFilter::None).unique().take(12).run();
+
+    assert!(out.contains(&QueryResult::Vertex(*name_idx.get("Baldr").unwrap())));
+    assert!(out.contains(&QueryResult::Vertex(*name_idx.get("Thor").unwrap())));
+
+    // Asynchronous queries should work
+    let mut q = Query::new(&graph, VertexFilter::Id(*name_idx.get("Auðumbla").unwrap()));
+    q.r#in(EdgeFilter::None).r#in(EdgeFilter::None).r#in(EdgeFilter::None).property("name".to_string()).take(1);
+
+    assert_eq!(q.run(), vec![ QueryResult::Value( Value::String( "Vé".to_string() )) ]);
+    assert_eq!(q.run(), vec![ QueryResult::Value( Value::String( "Vili".to_string() )) ]);
+    assert_eq!(q.run(), vec![ QueryResult::Value( Value::String( "Odin".to_string() )) ]);
+    assert_eq!(q.run().len(), 0);
+    assert_eq!(q.run().len(), 0);
+
+    // Gathering ancestors up to three generations back
+    let mut q = Query::new(&graph, VertexFilter::Id(*name_idx.get("Thor").unwrap()));
+    let out = q.out(EdgeFilter::None).r#as("parent".to_string()).out(EdgeFilter::None).r#as("grandparent".to_string()).out(EdgeFilter::None).r#as("great-grandparent".to_string())
+        .merge(vec!["parent".to_string(),"grandparent".to_string(),"great-grandparent".to_string()]).run();
+
+    assert!(out.contains(&QueryResult::Vertex(*name_idx.get("Odin").unwrap())));
+    assert!(out.contains(&QueryResult::Vertex(*name_idx.get("Borr").unwrap())));
+    assert!(out.contains(&QueryResult::Vertex(*name_idx.get("Búri").unwrap())));
+    assert!(out.contains(&QueryResult::Vertex(*name_idx.get("Jörð").unwrap())));
+    assert!(out.contains(&QueryResult::Vertex(*name_idx.get("Nótt").unwrap())));
+    assert!(out.contains(&QueryResult::Vertex(*name_idx.get("Nörfi").unwrap())));
+    assert!(out.contains(&QueryResult::Vertex(*name_idx.get("Bestla").unwrap())));
+    assert!(out.contains(&QueryResult::Vertex(*name_idx.get("Bölþorn").unwrap())));
+
+    // Get Thor's sibling Baldr
+    let mut q = Query::new(&graph, VertexFilter::Id(*name_idx.get("Thor").unwrap()));
+    let out = q.r#as("me".to_string()).out(EdgeFilter::None).r#in(EdgeFilter::None).except("me".to_string()).unique().run();
+
+    assert_eq!(out, vec![QueryResult::Vertex( *name_idx.get("Baldr").unwrap() )]);
+
+    // Get Thor's uncles and aunts
+    let mut q = Query::new(&graph, VertexFilter::Id(*name_idx.get("Thor").unwrap()));
+    let out = q.out(EdgeFilter::None).r#as("parent".to_string()).out(EdgeFilter::None).r#in(EdgeFilter::None).except("parent".to_string()).unique().run();
+ 
+    assert_eq!(out, vec![QueryResult::Vertex(*name_idx.get("Vé").unwrap()), QueryResult::Vertex(*name_idx.get("Vili").unwrap()), QueryResult::Vertex(*name_idx.get("Dagr").unwrap())]);
+
     
 }
 
